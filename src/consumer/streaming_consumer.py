@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Spark Structured Streaming Consumer
-Processes events from Kafka with checkpointing and watermarking
+Processes cryptocurrency trade data from Kafka with checkpointing and watermarking
 """
 
 import os
@@ -39,7 +39,7 @@ batch_size = Histogram('batch_size_events', 'Number of events per batch')
 
 
 class StreamingConsumer:
-    """Spark Structured Streaming consumer for real-time event processing"""
+    """Spark Structured Streaming consumer for real-time crypto trade processing"""
     
     def __init__(self,
                  app_name: str = "StreamingPipeline",
@@ -85,35 +85,17 @@ class StreamingConsumer:
         return spark
     
     def get_event_schema(self) -> StructType:
-        """Define the schema for incoming events"""
+        """Define the schema for crypto trade events"""
         return StructType([
             StructField("event_id", StringType(), False),
             StructField("event_type", StringType(), False),
-            StructField("user_id", StringType(), False),
+            StructField("symbol", StringType(), False),
+            StructField("price", DoubleType(), False),
+            StructField("quantity", DoubleType(), False),
+            StructField("trade_time", IntegerType(), False),
             StructField("timestamp", StringType(), False),
-            StructField("device", StringType(), True),
-            StructField("location", StringType(), True),
-            StructField("session_id", StringType(), True),
-            # Event-specific fields (nullable)
-            StructField("login_method", StringType(), True),
-            StructField("success", BooleanType(), True),
-            StructField("page", StringType(), True),
-            StructField("referrer", StringType(), True),
-            StructField("duration_seconds", IntegerType(), True),
-            StructField("item_id", StringType(), True),
-            StructField("category", StringType(), True),
-            StructField("position", IntegerType(), True),
-            StructField("order_id", StringType(), True),
-            StructField("items", ArrayType(StringType()), True),
-            StructField("quantities", ArrayType(IntegerType()), True),
-            StructField("total_amount", DoubleType(), True),
-            StructField("currency", StringType(), True),
-            StructField("payment_method", StringType(), True),
-            StructField("quantity", IntegerType(), True),
-            StructField("price", DoubleType(), True),
-            StructField("search_query", StringType(), True),
-            StructField("results_count", IntegerType(), True),
-            StructField("clicked_position", IntegerType(), True)
+            StructField("buyer_is_maker", BooleanType(), True),
+            StructField("trade_id", IntegerType(), True)
         ])
     
     def read_kafka_stream(self) -> DataFrame:
@@ -142,109 +124,80 @@ class StreamingConsumer:
             .withColumn("processing_time", current_timestamp())
     
     def calculate_aggregations(self, df: DataFrame) -> Dict[str, DataFrame]:
-        """Calculate various aggregations on the event stream"""
-        # Apply watermarking for late data handling (5 minutes)
-        watermarked_df = df.withWatermark("event_time", "5 minutes")
+        """Calculate various aggregations on crypto trade stream"""
+        # Apply watermarking for late data handling (1 minute for crypto)
+        watermarked_df = df.withWatermark("event_time", "1 minute")
         
         aggregations = {}
         
-        # 1. Event counts by type (1-minute tumbling windows)
-        aggregations['event_counts'] = watermarked_df \
+        # 1. Trade counts and volume by symbol (1-minute windows)
+        aggregations['trade_metrics'] = watermarked_df \
             .groupBy(
                 window(col("event_time"), "1 minute"),
-                col("event_type")
+                col("symbol")
+            ) \
+            .agg(
+                count("*").alias("trade_count"),
+                spark_sum("quantity").alias("total_volume"),
+                avg("price").alias("avg_price"),
+                spark_min("price").alias("low_price"),
+                spark_max("price").alias("high_price")
+            ) \
+            .select(
+                col("window.start").alias("window_start"),
+                col("window.end").alias("window_end"),
+                col("symbol"),
+                col("trade_count"),
+                col("total_volume"),
+                col("avg_price"),
+                col("low_price"),
+                col("high_price")
+            )
+        
+        # 2. Price changes (5-minute windows)
+        aggregations['price_changes'] = watermarked_df \
+            .groupBy(
+                window(col("event_time"), "5 minutes"),
+                col("symbol")
+            ) \
+            .agg(
+                spark_min("price").alias("open_price"),
+                spark_max("price").alias("high_price"),
+                spark_min("price").alias("low_price"),
+                avg("price").alias("close_price"),
+                spark_sum("quantity").alias("volume"),
+                count("*").alias("trade_count")
+            ) \
+            .select(
+                col("window.start").alias("window_start"),
+                col("window.end").alias("window_end"),
+                col("symbol"),
+                col("open_price"),
+                col("high_price"),
+                col("low_price"),
+                col("close_price"),
+                col("volume"),
+                col("trade_count")
+            )
+        
+        # 3. Buy vs Sell pressure (1-minute windows)
+        aggregations['buy_sell_pressure'] = watermarked_df \
+            .groupBy(
+                window(col("event_time"), "1 minute"),
+                col("symbol"),
+                col("buyer_is_maker")
             ) \
             .agg(
                 count("*").alias("count"),
-                approx_count_distinct("user_id").alias("unique_users")
+                spark_sum("quantity").alias("volume")
             ) \
             .select(
                 col("window.start").alias("window_start"),
                 col("window.end").alias("window_end"),
-                col("event_type"),
+                col("symbol"),
+                col("buyer_is_maker"),
                 col("count"),
-                col("unique_users")
-            )
-        
-        # 2. User activity metrics (5-minute sliding windows)
-        aggregations['user_activity'] = watermarked_df \
-            .groupBy(
-                window(col("event_time"), "5 minutes", "1 minute"),
-                col("user_id")
-            ) \
-            .agg(
-                count("*").alias("event_count"),
-                collect_list("event_type").alias("event_types"),
-                spark_min("event_time").alias("first_event"),
-                spark_max("event_time").alias("last_event")
-            ) \
-            .select(
-                col("window.start").alias("window_start"),
-                col("window.end").alias("window_end"),
-                col("user_id"),
-                col("event_count"),
-                col("event_types"),
-                col("first_event"),
-                col("last_event")
-            )
-        
-        # 3. Purchase analytics (for purchase events)
-        purchase_df = watermarked_df.filter(col("event_type") == "purchase")
-        if purchase_df:
-            aggregations['purchase_metrics'] = purchase_df \
-                .groupBy(window(col("event_time"), "10 minutes")) \
-                .agg(
-                    count("*").alias("total_orders"),
-                    spark_sum("total_amount").alias("total_revenue"),
-                    avg("total_amount").alias("avg_order_value"),
-                    spark_max("total_amount").alias("max_order_value"),
-                    spark_min("total_amount").alias("min_order_value"),
-                    approx_count_distinct("user_id").alias("unique_buyers")
-                ) \
-                .select(
-                    col("window.start").alias("window_start"),
-                    col("window.end").alias("window_end"),
-                    col("total_orders"),
-                    col("total_revenue"),
-                    col("avg_order_value"),
-                    col("max_order_value"),
-                    col("min_order_value"),
-                    col("unique_buyers")
-                )
-        
-        # 4. Real-time session analytics
-        aggregations['session_metrics'] = watermarked_df \
-            .groupBy(
-                window(col("event_time"), "5 minutes"),
-                col("session_id")
-            ) \
-            .agg(
-                count("*").alias("events_in_session"),
-                collect_list("event_type").alias("session_events"),
-                spark_min("event_time").alias("session_start"),
-                spark_max("event_time").alias("session_end")
-            ) \
-            .select(
-                col("window.start").alias("window_start"),
-                col("session_id"),
-                col("events_in_session"),
-                col("session_events"),
-                col("session_start"),
-                col("session_end"),
-                (col("session_end").cast("long") - col("session_start").cast("long")).alias("session_duration_seconds")
-            )
-        
-        # 5. Device and location statistics
-        aggregations['device_stats'] = watermarked_df \
-            .groupBy(
-                window(col("event_time"), "10 minutes"),
-                col("device"),
-                col("location")
-            ) \
-            .agg(
-                count("*").alias("event_count"),
-                approx_count_distinct("user_id").alias("unique_users"),
-                approx_count_distinct("session_id").alias("unique_sessions")
+                col("volume")
             )
         
         return aggregations

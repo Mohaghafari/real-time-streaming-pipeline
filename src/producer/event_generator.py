@@ -134,12 +134,12 @@ class CryptoPriceProducer:
         """Produce event to Kafka"""
         try:
             with event_latency.time():
-                key = event['user_id']
+                key = event['symbol']  # Use symbol as key for partitioning
                 future = self.producer.send(self.topic, key=key, value=event)
                 # Block until sent (for guaranteed delivery)
                 future.get(timeout=10)
             events_produced.inc()
-            logger.debug(f"Produced event: {event['event_id']}")
+            logger.debug(f"Produced trade: {event['symbol']} @ ${event['price']}")
         except KafkaError as e:
             events_failed.inc()
             logger.error(f"Failed to produce event: {e}")
