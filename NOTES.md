@@ -1,14 +1,27 @@
 # Development Notes
 
-Random notes I took while building this.
+Random notes from building this.
+
+## Why Crypto Data?
+
+Initially was generating fake e-commerce events. Decided real data would be way more impressive for portfolio. Binance has a free WebSocket API - perfect!
+
+## Binance WebSocket
+
+Their API is actually really good. No auth needed for public trade streams. Just connect and data flows. Getting 100-500 trades/sec depending on market activity.
+
+Format is simple:
+```
+wss://stream.binance.com:9443/stream?streams=btcusdt@trade/ethusdt@trade...
+```
 
 ## Initial Setup Issues
 
-Had trouble with the Spark Docker image. The bitnami/spark images weren't working properly, kept getting connection errors. Switched to apache/spark:3.5.0-python3 and that fixed it.
+Spark Docker image issues. bitnami/spark wasn't working. Switched to apache/spark:3.5.0-python3.
 
 ## Kafka Configuration
 
-Took a while to get the bootstrap servers right. Inside Docker network it's `kafka:29092` but from host it's `localhost:9092`. This tripped me up for like 2 hours.
+Docker networking was confusing. Inside network: `kafka:29092`. From host: `localhost:9092`. Took 2 hours to figure out.
 
 ## Checkpointing
 
@@ -30,12 +43,14 @@ This lets the system wait for late data before finalizing aggregations.
 
 ## Performance
 
-Started at about 10 events/sec. After some tuning:
-- Enabled backpressure
-- Adjusted shuffle partitions to 10
-- Set maxOffsetsPerTrigger to 10000
+With real crypto data, volume is unpredictable. During Asian trading hours can get 500+ trades/sec. Weekends are quieter ~50-100/sec.
 
-Now consistently hitting 18 events/sec (~65K/hour).
+Tuning helped:
+- Enabled backpressure (critical for variable rates)
+- Shuffle partitions = 10
+- maxOffsetsPerTrigger = 10000
+
+BTC and ETH generate the most volume. DOGE is surprisingly active too.
 
 ## Docker Memory
 
@@ -49,8 +64,9 @@ Needs at least 8GB. Spark worker is configured for 2GB which seems to be enough 
 
 ## To Do
 
-- Add exactly-once semantics (harder than it sounds)
-- Better error handling
-- Schema registry would be nice
-- Maybe add Flink for comparison?
+- Calculate VWAP (Volume Weighted Average Price) in Spark
+- Add price alerts when big moves happen
+- Compare prices across exchanges (add Coinbase feed)
+- Better error handling for WebSocket disconnects
+- Maybe add order book data (more complex than trades)
 

@@ -150,7 +150,7 @@ services:
     networks:
       - streaming-network
 
-  # Kafka Producer Application
+  # Crypto Price Stream Producer
   kafka-producer:
     build: 
       context: .
@@ -160,7 +160,6 @@ services:
       - kafka
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - EVENTS_PER_SECOND=14  # ~50K events/hour
       - TOPIC_NAME=streaming-events
     volumes:
       - ./src/producer:/app
