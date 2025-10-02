@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'streaming-pipeline'
+
+scrape_configs:
+  # Kafka Producer metrics
+  - job_name: 'kafka-producer'
+    static_configs:
+      - targets: ['kafka-producer:8000']
+        labels:
+          component: 'producer'
+          
+  # Spark Consumer metrics
+  - job_name: 'spark-consumer'
+    static_configs:
+      - targets: ['spark-master:8001']
+        labels:
+          component: 'consumer'
+          
+  # Kafka metrics (JMX)
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:9101']
+        labels:
+          component: 'kafka-broker'
+          
+  # Spark metrics
+  - job_name: 'spark-master'
+    static_configs:
+      - targets: ['spark-master:8080']
+        labels:
+          component: 'spark-master'
+          
+  - job_name: 'spark-worker'
+    static_configs:
+      - targets: ['spark-worker:8080']
+        labels:
+          component: 'spark-worker'
