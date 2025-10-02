@@ -1,197 +1,172 @@
-# Real-Time Crypto Price Streaming Pipeline
+# Real-Time Crypto Streaming with Kafka & Spark
 
-A real-time data pipeline that streams live cryptocurrency prices from Binance and processes them using Kafka and Spark Structured Streaming. Built to understand how financial platforms handle real-time market data at scale.
+Streaming live cryptocurrency prices and processing them in real-time. Built this to learn how financial platforms handle high-frequency market data.
 
-## What It Does
+## What This Does
 
-Streams live trade data for 10 major cryptocurrencies (BTC, ETH, SOL, etc.) from Binance WebSocket API, processes them in real-time with Spark, and tracks metrics with Prometheus/Grafana. Handles hundreds of price updates per second with proper fault tolerance.
+Connects to Binance WebSocket API and streams live crypto trades (BTC, ETH, SOL, etc.) into Kafka, then processes them with Spark Structured Streaming to calculate things like price changes, volume, and trading patterns.
 
-**Tech Stack**: Kafka, Spark, Docker, Binance API, Prometheus, Grafana, Python
+Currently streaming ~200-500 trades per second depending on market activity.
 
-**Live Data**: Real cryptocurrency trades from Binance (BTC, ETH, BNB, ADA, SOL, XRP, DOT, DOGE, MATIC, LINK)
+## Tech Used
 
-## Why I Built This
+- **Kafka** - Message queue for the trade stream
+- **Spark Structured Streaming** - Real-time processing
+- **Binance API** - Live crypto data (free, no auth needed)
+- **Docker** - Everything runs in containers
+- **Prometheus + Grafana** - Monitoring
 
-Wanted to work with real financial data and understand:
-- How trading platforms handle real-time market data
-- Kafka message streaming with actual live data (not synthetic)
-- Spark Structured Streaming for financial analytics
-- Building fault-tolerant systems with checkpointing
-- Processing high-frequency data streams
-- Docker orchestration for production systems
+## Quick Start
+
+Need Docker installed.
+
+```bash
+git clone https://github.com/Mohaghafari/real-time-streaming-pipeline.git
+cd real-time-streaming-pipeline
+
+# Start everything
+docker-compose up -d
+
+# See live trades (wait ~30 sec for Kafka to start)
+docker exec kafka kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic streaming-events \
+  --max-messages 10
+```
+
+You'll see actual Bitcoin/Ethereum trades with real prices.
 
 ## Architecture
 
 ```
-┌─────────────────┐
-│  Binance API    │  (WebSocket)
-│  Real-time      │
-│  Trade Stream   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐     ┌─────────────┐     ┌──────────────────┐
-│  Price Stream   │────▶│    Kafka    │────▶│ Spark Structured │
-│  Producer       │     │   Broker    │     │   Streaming      │
-└─────────────────┘     └─────────────┘     └──────────────────┘
-                               │                      │
-                               ▼                      ▼
-                        ┌─────────────┐        ┌─────────────┐
-                        │ Prometheus  │◀───────│  Metrics    │
-                        └─────────────┘        └─────────────┘
-                               │
-                               ▼
-                        ┌─────────────┐
-                        │   Grafana   │
-                        └─────────────┘
+Binance WebSocket
+    ↓
+Python Producer → Kafka → Spark → Parquet Files
+    ↓
+Prometheus ← metrics
+    ↓
+Grafana (dashboards)
 ```
+
+## What Gets Tracked
+
+Each trade has:
+- Symbol (BTCUSDT, ETHUSDT, etc.)
+- Price
+- Quantity
+- Timestamp  
+- Buyer/seller info
+
+Spark calculates:
+- Price changes in 1-min and 5-min windows
+- Trading volume per symbol
+- Buy vs sell pressure
+- OHLC candles
+
+## Web UIs
+
+After starting:
+- Kafka UI: http://localhost:8080 (see topics/messages)
+- Spark UI: http://localhost:8081 (job monitoring)
+- Grafana: http://localhost:3000 (dashboards, login: admin/admin)
 
 ## Project Structure
 
 ```
-.
-├── docker-compose.yml          # Docker services configuration
-├── requirements.txt            # Python dependencies
-├── README.md                   # This file
-├── config/                     # Configuration files
-│   ├── prometheus.yml         # Prometheus configuration
-│   └── grafana/               # Grafana dashboards and datasources
-├── docker/                     # Docker build files
-│   ├── kafka/                 # Kafka-related Dockerfiles
-│   └── spark/                 # Spark Dockerfile
-├── src/                        # Source code
-│   ├── producer/              # Kafka event generator
-│   ├── consumer/              # Spark streaming consumer
-│   ├── monitoring/            # Monitoring utilities
-│   └── utils/                 # Shared utilities
-├── scripts/                    # Operational scripts
-├── data/                       # Data storage (git-ignored)
-└── tests/                      # Test files
+├── docker-compose.yml       # All services
+├── src/
+│   ├── producer/           # Binance → Kafka
+│   └── consumer/           # Kafka → Spark processing
+├── docker/                 # Dockerfiles
+└── scripts/                # Helper scripts
 ```
 
-## Getting Started
+## How It Works
 
-You'll need Docker installed with at least 8GB RAM available.
+**Producer** (`src/producer/event_generator.py`):
+- Connects to Binance WebSocket
+- Subscribes to 10 trading pairs
+- Pushes each trade to Kafka topic `streaming-events`
+- Uses symbol as partition key
 
-1. Clone and start:
-```bash
-git clone https://github.com/Mohaghafari/real-time-streaming-pipeline.git
-cd real-time-streaming-pipeline
-```
+**Consumer** (`src/consumer/streaming_consumer.py`):
+- Reads from Kafka with Spark
+- Windows data by time (1min, 5min)
+- Calculates aggregations
+- Saves to Parquet with checkpointing
 
-2. Start everything:
-```bash
-docker-compose up -d
-```
+## Why Crypto Data?
 
-3. Watch live crypto trades:
-```bash
-# See real trades from Binance
-./scripts/watch_crypto_stream.sh
+Initially had fake e-commerce events but switched to real financial data because:
+1. Way more impressive for portfolio
+2. Actually useful analytics (price changes, volume patterns)
+3. Variable throughput (teaches you to handle spikes)
+4. Free API access from Binance
 
-# Or manually:
-docker exec kafka kafka-console-consumer \
-  --bootstrap-server localhost:9092 \
-  --topic streaming-events \
-  --max-messages 5
-```
+## Things I Learned
 
-4. Access the UIs:
-- Kafka UI: http://localhost:8080
-- Spark UI: http://localhost:8081
-- Grafana: http://localhost:3000 (admin/admin)
+- WebSocket connections in Python aren't trivial
+- Kafka's `acks=all` vs `acks=1` performance tradeoff
+- Spark watermarking for late-arriving data
+- Why checkpointing is critical (found out the hard way)
+- Docker networking between containers
+- Processing variable-rate streams (crypto markets are wild at 3am)
 
-To stop: `docker-compose down`
+## Monitoring
 
-## Data Schema
+Prometheus scrapes metrics from producer and consumer:
+- Trades per second
+- Processing lag
+- Kafka offset tracking
+- Error rates
 
-Real-time crypto trade events from Binance:
+Grafana has dashboards showing real-time throughput and price charts.
 
-```json
-{
-  "event_id": "uuid",
-  "event_type": "trade",
-  "symbol": "BTCUSDT",
-  "price": 43250.50,
-  "quantity": 0.025,
-  "trade_time": 1696234567890,
-  "timestamp": "2024-10-02T12:34:56Z",
-  "buyer_is_maker": false,
-  "trade_id": 12345678
-}
-```
+## Common Issues
 
-**Tracked pairs**: BTC, ETH, BNB, ADA, SOL, XRP, DOT, DOGE, MATIC, LINK (all vs USDT)
+**Kafka won't start**
+- Needs 8GB RAM for Docker
+- Takes ~30 seconds to fully initialize
+- Check logs: `docker logs kafka`
 
-## Key Features
+**No trades showing up**
+- Make sure producer connected to Binance
+- Check: `docker logs kafka-producer`
+- Should see "WebSocket connection opened"
 
-**Fault Tolerance**
-- Spark checkpointing for recovery
-- Kafka replication and acks
-- At-least-once delivery semantics
-
-**Handling Late Data**
-- 5-minute watermark for late arrivals
-- Event-time processing (not processing-time)
-
-**Monitoring**
-- Prometheus metrics from producer and consumer
-- Grafana dashboards for visualization
-- Real-time throughput and latency tracking
+**Spark errors**
+- Schema mismatch usually
+- Old data in checkpoints: `rm -rf data/spark-checkpoints/*`
 
 ## Performance
 
-Processing real-time trade data - volume varies with market activity (typically 100-500 trades/sec during active hours). Main metrics:
-- Price updates per second by symbol
-- Trade volume aggregations
-- Price changes in time windows
-- Processing latency
+Getting ~200-500 trades/sec in active hours. BTC and ETH generate most volume. Weekends are quieter.
 
-All visible in Grafana dashboards.
+Kafka handles it fine with default settings. Spark processes in ~30 second microbatches.
 
-## Testing
+## Future Ideas
+
+- Add more exchanges (Coinbase, Kraken) for arbitrage detection
+- Calculate moving averages and RSI
+- Price anomaly alerts
+- Historical data replay for backtesting
+- Implement exactly-once semantics
+
+## Files You Should Look At
+
+- `src/producer/event_generator.py` - WebSocket → Kafka
+- `src/consumer/streaming_consumer.py` - Kafka → Spark aggregations
+- `docker-compose.yml` - Full stack setup
+- `NOTES.md` - Random dev notes I took while building
+
+## Running Tests
 
 ```bash
 pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-## Troubleshooting
-
-If things aren't working:
-- Check Docker has enough memory (8GB+)
-- Make sure ports aren't already in use: 3000, 8080, 8081, 9090, 9092
-- Look at logs: `docker-compose logs -f`
-- Kafka takes ~30 seconds to start up properly
-
-## What I Learned
-
-- Working with real financial data APIs (Binance WebSocket)
-- Kafka's guarantee mechanisms with high-frequency data
-- Spark Structured Streaming for financial time-series
-- Why checkpointing is critical for stateful streaming
-- Watermarking for handling out-of-order trades
-- Docker networking between Kafka and WebSocket connections
-- Processing variable-rate data streams (crypto markets are unpredictable!)
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## Future Improvements
-
-Ideas for v2:
-- Add more exchanges (Coinbase, Kraken) for price comparison
-- Implement trading signals (moving averages, RSI)
-- Exactly-once semantics (currently at-least-once)
-- Price anomaly detection
-- Historical data replay for backtesting
-- Kubernetes deployment
-- Add orderbook data (not just trades)
+(Tests are basic right now, mainly for producer connection logic)
 
 ## License
 
@@ -199,6 +174,10 @@ MIT
 
 ## Contact
 
-Mohammad Ghafari - [mmqaffari@gmail.com](mailto:mmqaffari@gmail.com)
-
+Mohammad Ghafari  
+[mmqaffari@gmail.com](mailto:mmqaffari@gmail.com)  
 [LinkedIn](https://www.linkedin.com/in/mohaghafari/) | [GitHub](https://github.com/Mohaghafari)
+
+---
+
+Built this over a few weeks while learning Kafka and Spark. If you have questions or suggestions, open an issue!
